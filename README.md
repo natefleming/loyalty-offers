@@ -6,10 +6,13 @@ A Databricks Asset Bundle that demonstrates **large-scale batch LLM inference** 
 - **Bundle engine**: `direct` (Databricks CLI ≥ 0.279.0)
 - **Cluster**: DAB-provisioned top-level cluster (`resources.clusters.gpu_inference`), **fixed `num_workers`** (no autoscale — see "Why fixed workers" below), Azure spot with on-demand fallback. The cluster survives between runs (it's an all-purpose cluster bound by `existing_cluster_id`); `autotermination_minutes: 10` shuts it down ~10 minutes after the last activity.
 - **VM SKU**: `Standard_NC24ads_A100_v4` (1× NVIDIA A100 80 GB per worker)
-- **Inference engine**: **vLLM 0.8.5.post1** with **xgrammar** guided-decoding backend in **`guided_json`** mode, installed at cluster boot via `scripts/init_vllm.sh`. This combination is the empirical winner of a 6-variant May 2026 matrix on this hardware — see `notebooks/03_batch_inference.py` for the per-knob rationale.
+- **Inference engine**: **vLLM 0.8.5.post1** with **xgrammar** guided-decoding backend in `**guided_json`** mode, installed at cluster boot via `scripts/init_vllm.sh`. This combination is the empirical winner of a 6-variant May 2026 matrix on this hardware — see `notebooks/03_batch_inference.py` for the per-knob rationale.
 - **Model**: **Qwen2.5-1.5B-Instruct** (default for both dev and prod). 1.5B + guided_json hits the 8h SLO on 30M rows at ~$1k/run on Azure spot with ~3% fallback. 7B + guided_json costs ~4× more for the same SLO at 0% fallback — switch via `--var hf_model=Qwen/Qwen2.5-7B-Instruct` if needed.
 - **UC home**: `retail_consumer_goods.tractor_supply` (override via `--var catalog=... --var schema=...`)
-- **Scale & SLO**: 10 k rows in `dev` (~13 min, ~$2); **30 M rows in `prod` (≤8 h, ~$1,000–1,200 on Azure spot at `num_workers=90`)**. Double `num_workers` to ~180 for a 4 h SLO at ~$2k/run.
+- **Scale & SLO**: three targets ship out of the box:
+  - `**dev`**: 10 k rows, 4 GPU workers, ~13 min, ~$2/run on Azure spot. Iteration loop.
+  - `**staging**`: 1 M rows, 15 GPU workers, ~6 h, ~$135/run on Azure spot. Load-test the full pipeline before committing 30 M GPU spend; ship intermediate output to downstream integration testing.
+  - `**prod**`: 30 M rows, 90 GPU workers. Cost ~$1,000-1,200/run on Azure spot. Double `num_workers` to ~180 for a 4 h SLO at ~$2k/run.
 
 ---
 
@@ -71,9 +74,9 @@ loyalty-offers/
 
 1. Databricks CLI ≥ 0.279.0 (`databricks --version`)
 2. A Databricks CLI **profile** for the target workspace. Create with:
-   ```bash
+  ```bash
    databricks auth login --host https://<your-workspace>.cloud.databricks.com
-   ```
+  ```
    The login command will prompt for a profile name (any string you like).
 3. A HuggingFace token with read access to `Qwen/Qwen2.5-7B-Instruct` exported as `HF_TOKEN`
 4. `jq` installed (the bootstrap script uses it)
@@ -111,18 +114,20 @@ The `prod` target sets `customers_target=30_000_000`, `num_workers=25`, and pins
 
 ## Configurable variables
 
-| Variable | Default (dev) | Default (prod) | Purpose |
-|---|---|---|---|
-| `catalog` | `retail_consumer_goods` | `retail_consumer_goods` | UC catalog |
-| `schema` | `tractor_supply` | `tractor_supply` | UC schema |
-| `customers_target` | `10_000` | `30_000_000` | Synthetic customer count |
-| `num_workers` | `4` | `25` | Fixed GPU worker count |
-| `gpu_node_type` | `Standard_NC24ads_A100_v4` | same | Worker VM SKU |
-| `cpu_driver_node_type` | `Standard_DS4_v2` | same | Driver VM SKU (no GPU) |
-| `hf_model` | `Qwen/Qwen2.5-1.5B-Instruct` | `Qwen/Qwen2.5-1.5B-Instruct` | HuggingFace model ID. 1.5B is the cost-optimal default that hits the 8h SLO at ~$1k/run; flip to 7B if 0% fallback is required. |
-| Job param `inference_mode` | `guided_json` | same | vLLM constrained-output mode. `guided_json` is the empirical winner. `none` (post-hoc validation only, ~17-28% fallback) is kept as a baseline comparator. |
-| Job param `guided_decoding_backend` | `xgrammar` | same | Only backend that handles the 20-element `offer_id` enum without hanging on this DBR/vLLM combo. |
-| `hf_secret_scope` / `hf_secret_key` | `loyalty-offers` / `HF_TOKEN` | same | Where the HF token lives |
+
+| Variable                            | dev                           | staging                      | prod                         | Purpose                                                                                                                                                    |
+| ----------------------------------- | ----------------------------- | ---------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `catalog`                           | `retail_consumer_goods`       | `retail_consumer_goods`      | `retail_consumer_goods`      | UC catalog                                                                                                                                                 |
+| `schema`                            | `tractor_supply`              | `tractor_supply`             | `tractor_supply`             | UC schema                                                                                                                                                  |
+| `customers_target`                  | `10_000`                      | `1_000_000`                  | `30_000_000`                 | Synthetic customer count                                                                                                                                   |
+| `num_workers`                       | `4`                           | `15`                         | `90`                         | Fixed GPU worker count                                                                                                                                     |
+| `gpu_node_type`                     | `Standard_NC24ads_A100_v4`    | same                         | same                         | Worker VM SKU                                                                                                                                              |
+| `cpu_driver_node_type`              | `Standard_DS4_v2`             | same                         | same                         | Driver VM SKU (no GPU)                                                                                                                                     |
+| `hf_model`                          | `Qwen/Qwen2.5-1.5B-Instruct`  | `Qwen/Qwen2.5-1.5B-Instruct` | `Qwen/Qwen2.5-1.5B-Instruct` | HuggingFace model ID. 1.5B is the cost-optimal default; flip to 7B if 0% fallback is required.                                                             |
+| Job param `inference_mode`          | `guided_json`                 | same                         | same                         | vLLM constrained-output mode. `guided_json` is the empirical winner. `none` (post-hoc validation only, ~17-28% fallback) is kept as a baseline comparator. |
+| Job param `guided_decoding_backend` | `xgrammar`                    | same                         | same                         | Only backend that handles the 20-element `offer_id` enum without hanging on this DBR/vLLM combo.                                                           |
+| `hf_secret_scope` / `hf_secret_key` | `loyalty-offers` / `HF_TOKEN` | same                         | same                         | Where the HF token lives                                                                                                                                   |
+
 
 Override any of them with `--var key=value` on the CLI.
 
@@ -130,21 +135,23 @@ Override any of them with `--var key=value` on the CLI.
 
 ## Pipeline (4 tasks)
 
-1. **`provision`** — `CREATE CATALOG/SCHEMA/TABLE IF NOT EXISTS` with **liquid clustering** on `(run_date, customer_id)`, MERGE-load `offer_catalog`, set the `run_date` task value.
-2. **`synthesize`** — `spark.range(N)` + deterministic transforms produce `customers_target` rows, MERGE into `customers`.
-3. **`inference`** (depends on `synthesize`, `max_retries: 2`) — anti-join against `offer_recommendations` to find unscored customers, repartition to ~50 k rows per task, `mapInPandas` runs **vLLM** with guided-decoding JSON schema to emit 4 ranked offers per customer, **append** to `offer_recommendations`. The whole append is a single Delta transaction — if any task fails terminally the write rolls back and the next attempt re-scores. What retries actually preserve: the model snapshot in the Volume (saves the ~14 GB download, ~5 min per retry) and the cached vLLM engine on any executor whose process survived.
-4. **`verify`** — asserts row counts, rank coverage, and that no hallucinated `offer_id` slipped through (which guided decoding makes impossible at the token level — verify is the belt to that suspenders).
+1. `**provision`** — `CREATE CATALOG/SCHEMA/TABLE IF NOT EXISTS` with **liquid clustering** on `(run_date, customer_id)`, MERGE-load `offer_catalog`, set the `run_date` task value.
+2. `**synthesize`** — `spark.range(N)` + deterministic transforms produce `customers_target` rows, MERGE into `customers`.
+3. `**inference**` (depends on `synthesize`, `max_retries: 2`) — anti-join against `offer_recommendations` to find unscored customers, repartition to ~50 k rows per task, `mapInPandas` runs **vLLM** with guided-decoding JSON schema to emit 4 ranked offers per customer, **append** to `offer_recommendations`. The whole append is a single Delta transaction — if any task fails terminally the write rolls back and the next attempt re-scores. What retries actually preserve: the model snapshot in the Volume (saves the ~14 GB download, ~5 min per retry) and the cached vLLM engine on any executor whose process survived.
+4. `**verify`** — asserts row counts, rank coverage, and that no hallucinated `offer_id` slipped through (which guided decoding makes impossible at the token level — verify is the belt to that suspenders).
 
 ---
 
 ## Failure recovery
 
-| Failure mode | What happens |
-|---|---|
-| vLLM transient error / executor OOM | Spark task retry (`spark.task.maxFailures: 2`) |
-| Inference task itself fails | Job-level `max_retries: 2` re-runs the task. The Spark write is one atomic Delta transaction, so a failed attempt commits nothing and the retry re-scores everyone for `run_date` (the anti-join is therefore a no-op on the second try). What the retry *does* save: the ~14 GB model snapshot is already in the Volume cache, so cold-start is ~5 min faster |
-| Whole job killed and you rerun a new run on the same `run_date` | The anti-join skips anyone already committed by an earlier *successful* attempt. This is the failure mode where the anti-join earns its keep |
-| Bad output / want to redo | `DELETE FROM offer_recommendations WHERE run_date = '<date>'` then re-run |
+
+| Failure mode                                                    | What happens                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| vLLM transient error / executor OOM                             | Spark task retry (`spark.task.maxFailures: 2`)                                                                                                                                                                                                                                                                                                                 |
+| Inference task itself fails                                     | Job-level `max_retries: 2` re-runs the task. The Spark write is one atomic Delta transaction, so a failed attempt commits nothing and the retry re-scores everyone for `run_date` (the anti-join is therefore a no-op on the second try). What the retry *does* save: the ~14 GB model snapshot is already in the Volume cache, so cold-start is ~5 min faster |
+| Whole job killed and you rerun a new run on the same `run_date` | The anti-join skips anyone already committed by an earlier *successful* attempt. This is the failure mode where the anti-join earns its keep                                                                                                                                                                                                                   |
+| Bad output / want to redo                                       | `DELETE FROM offer_recommendations WHERE run_date = '<date>'` then re-run                                                                                                                                                                                                                                                                                      |
+
 
 No Structured Streaming, no RocksDB state, no custom WAL. The pattern is: durable input + idempotent output + anti-join on restart.
 
@@ -152,10 +159,10 @@ No Structured Streaming, no RocksDB state, no custom WAL. The pattern is: durabl
 
 ## UC tables (in `<catalog>.<schema>`)
 
-- **`customers`** — synthetic loyalty profiles, `CLUSTER BY (run_date, customer_id)` (PK: `customer_id` + `run_date`)
-- **`offer_catalog`** — 20 curated TSC loyalty offers (PK: `offer_id`)
-- **`offer_recommendations`** — 4 rows per customer, `CLUSTER BY (run_date, customer_id)` (PK: `customer_id` + `run_date` + `rank`)
-- Volume **`hf_model_cache`** — persistent HF model weights cache mounted as `HF_HOME`
+- `**customers*`* — synthetic loyalty profiles, `CLUSTER BY (run_date, customer_id)` (PK: `customer_id` + `run_date`)
+- `**offer_catalog**` — 20 curated TSC loyalty offers (PK: `offer_id`)
+- `**offer_recommendations**` — 4 rows per customer, `CLUSTER BY (run_date, customer_id)` (PK: `customer_id` + `run_date` + `rank`)
+- Volume `**hf_model_cache**` — persistent HF model weights cache mounted as `HF_HOME`
 
 ---
 

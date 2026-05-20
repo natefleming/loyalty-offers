@@ -51,6 +51,28 @@ targets:
       customers_target: 10000
       num_workers: 4
 
+  staging:
+    # Mid-scale target (1M customers). Useful for load-testing the full pipeline
+    # against a realistic shape before committing GPU spend on the 30M prod run,
+    # and for shipping a staging-quality model output to downstream consumers
+    # for integration testing.
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      customers_target: 1000000
+      # Sizing math (measured: ~3 customers/sec/A100 on 1.5B + xgrammar +
+      # guided_json):
+      #   15 workers → 1M / (3 × 15) = 22,222s ≈ 6.2h wall time, ~$140 spot
+      #   25 workers → 1M / 75 = 13,333s ≈ 3.7h, ~$140 spot
+      #   50 workers → 1M / 150 = 6,667s ≈ 1.9h, ~$140 spot
+      # Cost is roughly constant across these (linear); pick the wall time
+      # that matches your iteration cadence. 15 is the default because that's
+      # the right size for "kick it off before lunch, check after lunch."
+      # Override at deploy time: `databricks bundle deploy -t staging --var num_workers=25`.
+      num_workers: 15
+      hf_model: Qwen/Qwen2.5-1.5B-Instruct
+
   prod:
     mode: production
     workspace:
