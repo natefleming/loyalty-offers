@@ -1,0 +1,88 @@
+# Top-level cluster resource: the DAB owns its full lifecycle
+# (create, update, destroy).
+#
+# Sizing & lifecycle:
+#   - Fixed `num_workers` (NOT autoscale). On a 4-8 hour GPU run the
+#     Databricks autoscaler can interpret a long-running `mapInPandas`
+#     stage as under-utilised and downscale, which kills in-flight LLM
+#     generations and forces task retries. A fixed fleet sidesteps that.
+#   - Azure spot with on-demand fallback. This is an all-purpose cluster
+#     bound to the job via `existing_cluster_id`, so it does NOT shut down
+#     at job-end the way a `job_clusters[]` cluster would. Instead it stays
+#     warm until `autotermination_minutes: 10` of inactivity, then shuts
+#     itself down. That keeps the second-run cold start short (warm Python,
+#     possibly warm vLLM cache on executors) while still bounding idle GPU
+#     spend at ~10 minutes per job run.
+#
+# vLLM install:
+#   - Installed by `scripts/init_vllm.sh` at cluster boot. See that file
+#     for why we use an init script instead of `%pip install vllm`.
+resources:
+  clusters:
+    gpu_inference:
+      cluster_name: loyalty-offers-gpu
+      spark_version: ${var.spark_version}
+      node_type_id: ${var.gpu_node_type}
+      driver_node_type_id: ${var.cpu_driver_node_type}
+      data_security_mode: SINGLE_USER
+      runtime_engine: STANDARD
+      autotermination_minutes: 10
+      azure_attributes:
+        availability: SPOT_WITH_FALLBACK_AZURE
+        first_on_demand: 1
+        spot_bid_max_price: -1
+      num_workers: ${var.num_workers}
+      spark_conf:
+        # vLLM engine errors are rarely transient (OOM, schema validation
+        # failure), so don't burn an hour retrying inside Spark before the
+        # job-level retry kicks in.
+        "spark.task.maxFailures": "2"
+        # If we ever switch on the Ray-on-Spark path, this is the difference
+        # between "Ray and Spark each think they own the GPU" (silent hang)
+        # and "Ray owns the GPU, Spark uses CPU for table writes" (works).
+        # Harmless for the mapInPandas path (Spark still gets the GPU because
+        # YARN-style GPU scheduling on Databricks honours new_cluster.gpu).
+        "spark.task.resource.gpu.amount": "0"
+        # Cap how many input rows fit in one Arrow batch fed to the Python
+        # worker. Without this, mapInPandas can ship megabytes of state per
+        # batch and bloat the executor cgroup until the OOM killer fires
+        # (the SIGKILL signature we saw across multiple runs on 2026-05-19).
+        "spark.sql.execution.arrow.maxRecordsPerBatch": "128"
+        # Force a fresh Python worker per task. With reuse, the vLLM engine's
+        # leaked CUDA contexts, KV-cache fragmentation, and Outlines FSM
+        # objects accumulate across tasks and the cgroup eventually OOMs.
+        # The trade-off is a ~30s vLLM cold-load per task — fine for our
+        # 4-task dev workload, and we override partition count to 1 task
+        # per worker anyway.
+        "spark.python.worker.reuse": "false"
+      spark_env_vars:
+        # Cache HuggingFace downloads to the bundle's Volume; persists between
+        # runs and is shared by every executor.
+        HF_HOME: /Volumes/${var.catalog}/${resources.schemas.tractor_supply.name}/hf_model_cache
+        # vLLM's worker subprocesses need `spawn` start-method on Linux to
+        # avoid CUDA-context inheritance issues from fork().
+        VLLM_WORKER_MULTIPROC_METHOD: spawn
+        # Disable vLLM's experimental V1 engine. V1 ships in 0.7+ and has a
+        # known SHM-broadcast hang at worker initialization on some Azure VMs.
+        # V0 is stable, well-tested, and what every public Databricks example
+        # we found exercises.
+        VLLM_USE_V1: "0"
+        # Some Azure VM topologies fail NCCL peer-to-peer init. Disabling it
+        # falls back to socket-based comms — slightly slower but reliable.
+        # We're on single-GPU workers (TP=1), so this is mostly defensive.
+        NCCL_P2P_DISABLE: "1"
+        # Verbose vLLM logs so the actor-init phase is visible in driver log
+        # if anything stalls.
+        VLLM_LOGGING_LEVEL: INFO
+        # Fast download channel for HuggingFace snapshots; we install
+        # hf_transfer in the init script.
+        HF_HUB_ENABLE_HF_TRANSFER: "1"
+      init_scripts:
+        - workspace:
+            destination: ${workspace.file_path}/scripts/init_vllm.sh
+      custom_tags:
+        project: loyalty-offers
+        # Resolved at deploy time to whoever ran `databricks bundle deploy`.
+        # Keeps the bundle portable across deployers.
+        owner: ${workspace.current_user.userName}
+        workload: gpu-batch-inference

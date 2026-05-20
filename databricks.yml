@@ -1,0 +1,80 @@
+bundle:
+  name: loyalty-offers
+  engine: direct
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: "Unity Catalog catalog for input/output tables and the HF model cache volume."
+    default: retail_consumer_goods
+  schema:
+    description: "Unity Catalog schema under `catalog` for this workload."
+    default: tractor_supply
+  hf_secret_scope:
+    description: "Databricks secret scope holding the HuggingFace access token."
+    default: loyalty-offers
+  hf_secret_key:
+    description: "Secret key within `hf_secret_scope` containing the HuggingFace token."
+    default: HF_TOKEN
+  hf_model:
+    description: |
+      HuggingFace model ID for the inference engine. Default Qwen2.5-1.5B-Instruct
+      because the May 2026 backend matrix showed 1.5B + xgrammar + guided_json
+      hits the 8h SLO on 30M rows at ~$1k/run (spot) with only ~3% fallback
+      vs ~$4k for 7B + guided_json. See the postmortem
+      (`~/.claude/plans/i-need-you-to-joyful-bachman.md`) and the May 2026
+      backend-matrix memory for the empirical comparison.
+    default: Qwen/Qwen2.5-1.5B-Instruct
+  customers_target:
+    description: "Number of synthetic customers to materialize for this run."
+    default: 10000
+  num_workers:
+    description: "Fixed GPU worker count for the inference cluster. We use fixed-size, not autoscale, because the Databricks autoscaler can misread a long-running mapInPandas stage as under-utilised and downscale mid-generation."
+    default: 4
+  gpu_node_type:
+    description: "Azure VM SKU for executor nodes. NC24ads_A100_v4 = 1x A100 80GB per worker."
+    default: Standard_NC24ads_A100_v4
+  cpu_driver_node_type:
+    description: "CPU-only driver VM SKU. The driver does the one-time HuggingFace snapshot download (~14 GB for Qwen2.5-7B) into the Volume cache before kicking off mapInPandas; DS4_v2 (28 GB RAM, 4 vCPU) keeps that pull comfortable. No GPU on the driver — vLLM only runs on executors."
+    default: Standard_DS4_v2
+  spark_version:
+    description: "Databricks Runtime ML for GPU. Pin to the latest tested LTS GPU ML release."
+    default: 16.4.x-gpu-ml-scala2.13
+
+targets:
+  dev:
+    default: true
+    mode: development
+    variables:
+      customers_target: 10000
+      num_workers: 4
+
+  prod:
+    mode: production
+    workspace:
+      # `mode: production` requires an explicit `root_path`. We interpolate
+      # the deploying user's identity so this bundle is portable across
+      # workspaces — there is no hardcoded username here.
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      customers_target: 30000000
+      # 90 A100s is the measured worker count needed to score 30M customers
+      # in ≤8h with the winning config (1.5B + xgrammar + guided_json,
+      # ~12 customers/sec/A100). At ~$1.50/A100-hr on Azure spot:
+      # 90 × 8h × $1.50 ≈ $1,080 per run. Double to ~180 workers for a
+      # 4h SLO (~$2,160 per run).
+      num_workers: 90
+      # 1.5B (NOT 7B): the May 2026 backend matrix showed 7B + guided_json
+      # costs 4× more (~$4k vs ~$1k per run on spot) for the same SLO. 1.5B's
+      # ~3% fallback rate goes to deterministic catalog-default offers (not
+      # hallucinations) — acceptable for the downstream offer-targeting
+      # consumer. See `reference_vllm_guided_decoding_matrix_2026_05_19.md`.
+      hf_model: Qwen/Qwen2.5-1.5B-Instruct
+
+# Note: targets intentionally do NOT pin `workspace.profile`. The deploying
+# user picks a profile per invocation:
+#   databricks bundle deploy -t dev -p <their-profile>
+# or via the DATABRICKS_CONFIG_PROFILE env var. This keeps the bundle
+# portable across customer workspaces.

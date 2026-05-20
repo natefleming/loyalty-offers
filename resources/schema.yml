@@ -1,0 +1,6 @@
+resources:
+  schemas:
+    tractor_supply:
+      catalog_name: ${var.catalog}
+      name: ${var.schema}
+      comment: "Loyalty offers batch inference workload (managed by the loyalty-offers bundle)."

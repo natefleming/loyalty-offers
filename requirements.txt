@@ -1,0 +1,7 @@
+# Local-dev / unit-test dependencies only. The cluster gets its full
+# inference stack (vLLM + torch + CUDA wheels) from scripts/init_vllm.sh
+# at cluster boot — pinning vLLM here would invite torch/CUDA upgrades on
+# `pip install -r requirements.txt` that would never match what's actually
+# running on the cluster.
+huggingface_hub>=0.24
+transformers<4.54.0

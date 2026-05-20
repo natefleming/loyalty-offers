@@ -1,0 +1,22 @@
+[
+  {"offer_id": "TSC-FEED-10",  "name": "10% off livestock & poultry feed", "description": "Save 10% on all bagged livestock and poultry feed for 30 days.", "category": "feed",       "audience_hint": "rural"},
+  {"offer_id": "TSC-FEED-BOGO","name": "Buy one bag of horse feed, get one 50% off", "description": "Stock up on Triple Crown or Purina horse feed.",            "category": "feed",       "audience_hint": "high-spender"},
+  {"offer_id": "TSC-FENCE-3FREE","name": "Buy 10 fence posts, get 3 free", "description": "Mix and match T-posts and wood posts on a single transaction.",       "category": "fence",      "audience_hint": "rural"},
+  {"offer_id": "TSC-FENCE-WIRE","name": "$15 off any roll of barbed or field fence wire", "description": "Applies to 330 ft and 660 ft rolls of fencing wire.",  "category": "fence",      "audience_hint": "rural"},
+  {"offer_id": "TSC-TOOLS-20", "name": "20% off Hyper Tough power tools",  "description": "One-day savings on cordless drills, drivers, and combo kits.",         "category": "tools",      "audience_hint": "urban"},
+  {"offer_id": "TSC-TOOLS-WORK","name": "$10 off any work-boot purchase",   "description": "Redeem in-store or online on Wolverine, Carolina, and Justin boots.",  "category": "apparel",    "audience_hint": "new"},
+  {"offer_id": "TSC-CARH-15",  "name": "15% off Carhartt jackets & bibs",  "description": "Cold-weather workwear discount, while supplies last.",                  "category": "apparel",    "audience_hint": "lapsed"},
+  {"offer_id": "TSC-PET-FOOD", "name": "$5 off any 30 lb bag of premium dog food", "description": "Applies to 4health, Diamond Naturals, Purina Pro Plan.",       "category": "feed",       "audience_hint": "urban"},
+  {"offer_id": "TSC-PET-VAX",  "name": "Free pet wellness visit with $25 purchase", "description": "Mobile pet vaccination clinic event coupon.",                  "category": "seasonal",   "audience_hint": "new"},
+  {"offer_id": "TSC-SEAS-LAWN","name": "Buy any riding mower, get $100 in TSC Rewards", "description": "Bonus rewards apply to all mowers $1,499+.",              "category": "seasonal",   "audience_hint": "high-spender"},
+  {"offer_id": "TSC-SEAS-PROP","name": "$3 off propane tank exchange",      "description": "Limit two exchanges per loyalty member.",                              "category": "seasonal",   "audience_hint": "rural"},
+  {"offer_id": "TSC-SHIP-75",  "name": "Free shipping on orders over $75",  "description": "Online-only, applies automatically at checkout.",                       "category": "membership", "audience_hint": "urban"},
+  {"offer_id": "TSC-NEIGH-30", "name": "30 bonus Neighbor's Club points",   "description": "Earn an extra 30 points on your next $50 purchase.",                    "category": "membership", "audience_hint": "lapsed"},
+  {"offer_id": "TSC-NEIGH-2X", "name": "2x Neighbor's Club points weekend", "description": "Double points all weekend on every department.",                        "category": "membership", "audience_hint": "high-spender"},
+  {"offer_id": "TSC-WINTER",   "name": "$20 off snow & ice removal tools",  "description": "Snow shovels, ice melt, and salt spreaders.",                           "category": "seasonal",   "audience_hint": "rural"},
+  {"offer_id": "TSC-GARDEN",   "name": "Buy 4 bags of mulch, get 4 free",   "description": "All hardwood, cypress, and cedar mulch varieties.",                     "category": "seasonal",   "audience_hint": "urban"},
+  {"offer_id": "TSC-CHICKS",   "name": "Free chick starter kit with 6+ chicks", "description": "Includes starter feeder, waterer, and bedding sample.",            "category": "feed",       "audience_hint": "new"},
+  {"offer_id": "TSC-TRAILER",  "name": "$50 off trailer hitches & accessories", "description": "Includes ball mounts, wiring kits, and brake controllers.",        "category": "tools",      "audience_hint": "rural"},
+  {"offer_id": "TSC-WELCOME",  "name": "$10 welcome credit for new members","description": "Earned automatically on first Neighbor's Club purchase.",              "category": "membership", "audience_hint": "new"},
+  {"offer_id": "TSC-WINBACK",  "name": "$25 welcome-back coupon",            "description": "For lapsed members who haven't shopped in 90+ days.",                   "category": "membership", "audience_hint": "lapsed"}
+]

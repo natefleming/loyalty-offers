@@ -1,0 +1,8 @@
+resources:
+  volumes:
+    hf_model_cache:
+      catalog_name: ${var.catalog}
+      schema_name: ${var.schema}
+      name: hf_model_cache
+      volume_type: MANAGED
+      comment: "Cache for downloaded HuggingFace model weights. Mounted as HF_HOME on the executors."

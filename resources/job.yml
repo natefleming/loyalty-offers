@@ -1,0 +1,138 @@
+resources:
+  jobs:
+    loyalty_offers_batch_inference:
+      name: "loyalty-offers batch inference"
+      description: "GPU batch inference: Qwen2.5 ranks loyalty offers per customer."
+
+      max_concurrent_runs: 1
+
+      # Job-level parameters. Override at run-time with:
+      #   databricks bundle run loyalty_offers_batch_inference \
+      #     --params 'force_rerun=true,run_smoke_tests=true'
+      parameters:
+        - name: force_rerun
+          default: "false"
+        - name: run_smoke_tests
+          # Toggle ON for fresh cluster bring-ups and CI runs (Gates 1 & 2).
+          # Toggle OFF for routine prod runs to save ~5-10 min cluster time.
+          default: "false"
+        - name: inference_mode
+          # How the inference notebook invokes vLLM:
+          #   guided_json (default) — one-shot `llm.chat()` with xgrammar JSON
+          #     schema constraint. Empirical winner from the May 2026 matrix:
+          #     ~13min on 10k @ 1.5B + 4 A100, 0 hallucinations, ~3% fallback,
+          #     full catalog coverage.
+          #   none — one-shot completion, no structured-output guard. Post-hoc
+          #     parse + catalog filter + fallback. ~17-28% fallback rate. Kept
+          #     as a baseline comparator.
+          default: "guided_json"
+        - name: guided_decoding_backend
+          # vLLM guided-decoding backend. `xgrammar` is the only backend that
+          # handles our 20-element offer_id enum without hanging (vllm PRs
+          # #15594, #15878). Ignored when inference_mode=none.
+          default: "xgrammar"
+
+      tasks:
+        # ------------------------------------------------------------------
+        # Smoke-test gate. Runs the conditional check; downstream tasks
+        # branch on its outcome.
+        # ------------------------------------------------------------------
+        - task_key: smoke_gate
+          condition_task:
+            op: EQUAL_TO
+            left: "{{job.parameters.run_smoke_tests}}"
+            right: "true"
+
+        # `scripts/dev_smoke_vllm.py` (formerly `notebooks/00_smoke_vllm.py`)
+        # is intentionally NOT in the job pipeline. That notebook needs a GPU
+        # on the driver — our prod cluster runs CPU-only drivers
+        # (`Standard_DS4_v2`) for cost reasons. Attach it manually to a
+        # single-node GPU cluster for interactive triage.
+        #
+        # `smoke_inference_engine` — lightweight integration test that loads
+        # vLLM on a worker GPU via `mapInPandas`, scores 100 synthetic rows,
+        # and asserts the output shape. Aborts the run fast if the vLLM-on-
+        # this-cluster stack is broken — saves ~30 min on the full inference
+        # path discovering the same failure.
+        - task_key: smoke_inference_engine
+          depends_on:
+            - task_key: smoke_gate
+              outcome: "true"
+          existing_cluster_id: ${resources.clusters.gpu_inference.id}
+          timeout_seconds: 1200
+          notebook_task:
+            notebook_path: ../notebooks/00_smoke_inference_engine.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${resources.schemas.tractor_supply.name}
+              hf_model: ${var.hf_model}
+              hf_secret_scope: ${var.hf_secret_scope}
+              hf_secret_key: ${var.hf_secret_key}
+
+        # ------------------------------------------------------------------
+        # Main pipeline. `provision` joins both branches of the condition
+        # task: if smokes ran, it depends on `smoke_mapinpandas`; if smokes
+        # were skipped, it depends on the FALSE outcome of `smoke_gate`.
+        # `run_if: AT_LEAST_ONE_SUCCESS` means whichever branch actually
+        # ran is enough to unblock provision.
+        # ------------------------------------------------------------------
+        - task_key: provision
+          depends_on:
+            - task_key: smoke_gate
+              outcome: "false"
+            - task_key: smoke_inference_engine
+          run_if: AT_LEAST_ONE_SUCCESS
+          existing_cluster_id: ${resources.clusters.gpu_inference.id}
+          notebook_task:
+            notebook_path: ../notebooks/01_provision.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${resources.schemas.tractor_supply.name}
+              hf_secret_scope: ${var.hf_secret_scope}
+              hf_secret_key: ${var.hf_secret_key}
+
+        - task_key: synthesize
+          depends_on:
+            - task_key: provision
+          existing_cluster_id: ${resources.clusters.gpu_inference.id}
+          notebook_task:
+            notebook_path: ../notebooks/02_synthesize_customers.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${resources.schemas.tractor_supply.name}
+              customers_target: ${var.customers_target}
+
+        - task_key: inference
+          depends_on:
+            - task_key: synthesize
+          existing_cluster_id: ${resources.clusters.gpu_inference.id}
+          # Retries are now incremental: 03_batch_inference appends to the
+          # output table partition-by-partition, and the anti-join at the
+          # top of the next attempt skips anything already committed. Two
+          # tries is plenty.
+          max_retries: 2
+          min_retry_interval_millis: 120000
+          retry_on_timeout: true
+          notebook_task:
+            notebook_path: ../notebooks/03_batch_inference.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${resources.schemas.tractor_supply.name}
+              hf_model: ${var.hf_model}
+              hf_secret_scope: ${var.hf_secret_scope}
+              hf_secret_key: ${var.hf_secret_key}
+              # Resolved from the job-level parameters at run time.
+              force_rerun: "{{job.parameters.force_rerun}}"
+              inference_mode: "{{job.parameters.inference_mode}}"
+              guided_decoding_backend: "{{job.parameters.guided_decoding_backend}}"
+
+        - task_key: verify
+          depends_on:
+            - task_key: inference
+          existing_cluster_id: ${resources.clusters.gpu_inference.id}
+          notebook_task:
+            notebook_path: ../notebooks/04_verify.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${resources.schemas.tractor_supply.name}
+              customers_target: ${var.customers_target}
