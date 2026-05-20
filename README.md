@@ -1,4 +1,4 @@
-# Tractor Supply Loyalty Offers — GPU Batch Inference DAB
+# Loyalty Offers — GPU Batch Inference DAB
 
 A Databricks Asset Bundle that demonstrates **large-scale batch LLM inference** with **Qwen2.5-1.5B-Instruct** (with one-flag escalation to 7B) on **Azure Databricks** GPU compute. The pipeline takes a customer's loyalty profile and ranks the top-4 offers from a curated catalog of 20 loyalty offers.
 
